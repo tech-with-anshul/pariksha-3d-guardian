@@ -41,23 +41,41 @@ const WebcamMonitor = ({ isActive, onViolation, onStatusUpdate }: WebcamMonitorP
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
         );
         
-        const landmarker = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-            delegate: 'GPU'
-          },
-          outputFaceBlendshapes: false,
-          outputFacialTransformationMatrixes: true,
-          runningMode: 'VIDEO',
-          numFaces: 2
-        });
+        // Try GPU first, fallback to CPU for better desktop compatibility
+        let landmarker: FaceLandmarker | null = null;
+        
+        try {
+          landmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+              delegate: 'GPU'
+            },
+            outputFaceBlendshapes: false,
+            outputFacialTransformationMatrixes: true,
+            runningMode: 'VIDEO',
+            numFaces: 2
+          });
+          console.log('MediaPipe Face Landmarker initialized with GPU');
+        } catch (gpuError) {
+          console.log('GPU not available, falling back to CPU:', gpuError);
+          landmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+              delegate: 'CPU'
+            },
+            outputFaceBlendshapes: false,
+            outputFacialTransformationMatrixes: true,
+            runningMode: 'VIDEO',
+            numFaces: 2
+          });
+          console.log('MediaPipe Face Landmarker initialized with CPU');
+        }
         
         setFaceLandmarker(landmarker);
         setIsInitialized(true);
-        console.log('MediaPipe Face Landmarker initialized');
       } catch (err) {
         console.error('Error initializing Face Landmarker:', err);
-        setError('Failed to initialize AI models');
+        setError('Failed to initialize AI models. Please use a modern browser with WebGL support.');
       }
     };
 
