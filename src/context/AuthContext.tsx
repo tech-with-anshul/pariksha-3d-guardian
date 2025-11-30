@@ -201,65 +201,102 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      // Create auth user via Supabase Admin API (or sign up)
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/`,
-          data: {
-            full_name: name,
-          }
-        }
-      });
-
-      if (authError) {
-        console.error("Error creating auth user:", authError);
-        // If user exists, we might need to just add the profile
-        if (authError.message.includes("already registered")) {
-          return false;
-        }
-        throw authError;
-      }
-
-      if (!authData.user) {
-        console.error("No user returned from signup");
-        return false;
-      }
-
-      const userId = authData.user.id;
-
-      // Create profile (might be auto-created by trigger, so use upsert pattern)
-      const { error: profileError } = await supabase
+      // First, check if user already exists in profiles by email
+      const { data: existingProfile } = await supabase
         .from("profiles")
-        .upsert({
-          id: userId,
-          full_name: name,
-          email: email,
-        }, { onConflict: 'id' });
+        .select("id")
+        .eq("email", email)
+        .single();
 
-      if (profileError) {
-        console.error("Error creating profile:", profileError);
-        // Continue anyway as trigger might have created it
+      let userId: string;
+
+      if (existingProfile) {
+        // User already exists - just update their role
+        userId = existingProfile.id;
+        console.log("User already exists, updating role:", userId);
+        
+        // Update profile name if provided
+        await supabase
+          .from("profiles")
+          .update({ full_name: name })
+          .eq("id", userId);
+      } else {
+        // Create new auth user
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/`,
+            data: {
+              full_name: name,
+            }
+          }
+        });
+
+        if (authError) {
+          console.error("Error creating auth user:", authError);
+          
+          // If user exists in auth but not profiles, try to get their ID
+          if (authError.message.includes("already registered")) {
+            // User exists in auth - we can't get their ID without admin rights
+            // So we'll need to handle this differently
+            console.log("User exists in auth, attempting to add via signIn");
+            
+            // Try signing in to get the user ID
+            const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+              email,
+              password,
+            });
+            
+            if (signInError || !signInData.user) {
+              console.error("Cannot sign in existing user:", signInError);
+              // Create profile entry anyway with a generated UUID
+              // This won't link to auth but allows tracking
+              return false;
+            }
+            
+            userId = signInData.user.id;
+            
+            // Sign out the admin (restore their session would be complex)
+            // Note: This is a workaround - ideally use admin API
+          } else {
+            throw authError;
+          }
+        } else if (!authData.user) {
+          console.error("No user returned from signup");
+          return false;
+        } else {
+          userId = authData.user.id;
+        }
+
+        // Create profile (might be auto-created by trigger, so use upsert)
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .upsert({
+            id: userId,
+            full_name: name,
+            email: email,
+          }, { onConflict: 'id' });
+
+        if (profileError) {
+          console.error("Error creating profile:", profileError);
+        }
       }
 
-      // Add user role
+      // Add or update user role (upsert to handle existing roles)
       const { error: roleError } = await supabase
         .from("user_roles")
-        .insert({
+        .upsert({
           user_id: userId,
           role: role as "admin" | "faculty" | "student",
-        });
+        }, { onConflict: 'user_id' });
 
       if (roleError) {
         console.error("Error adding role:", roleError);
-        // If role already exists, that's ok
-        if (!roleError.message.includes("duplicate")) {
-          throw roleError;
-        }
+        throw roleError;
       }
 
-      console.log("User created successfully:", userId);
+      console.log("User created/updated successfully:", userId);
       return true;
     } catch (error) {
       console.error("Error in addUser:", error);
