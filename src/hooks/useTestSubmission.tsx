@@ -34,7 +34,7 @@ export const useTestSubmission = () => {
           .insert({
             test_id: testId,
             student_id: studentId,
-            status: 'active',
+            status: 'in_progress',
             started_at: new Date().toISOString(),
           })
           .select()
