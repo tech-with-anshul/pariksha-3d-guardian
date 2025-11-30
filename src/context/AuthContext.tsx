@@ -194,7 +194,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const addUser = async (userData: Omit<User, "id"> & { password: string }): Promise<boolean> => {
-    const { role, name, email, password, erpId } = userData;
+    const { role, name, email, password } = userData;
     
     if (!role || !["faculty", "student", "admin"].includes(role)) {
       return false;
@@ -206,7 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .from("profiles")
         .select("id")
         .eq("email", email)
-        .single();
+        .maybeSingle();
 
       let userId: string;
 
@@ -221,7 +221,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .update({ full_name: name })
           .eq("id", userId);
       } else {
-        // Create new auth user
+        // Store current admin session before creating new user
+        const { data: currentSession } = await supabase.auth.getSession();
+        
+        // Create new auth user - the handle_new_user trigger will create profile
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email,
           password,
@@ -236,54 +239,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (authError) {
           console.error("Error creating auth user:", authError);
           
-          // If user exists in auth but not profiles, try to get their ID
-          if (authError.message.includes("already registered")) {
-            // User exists in auth - we can't get their ID without admin rights
-            // So we'll need to handle this differently
-            console.log("User exists in auth, attempting to add via signIn");
-            
-            // Try signing in to get the user ID
-            const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-              email,
-              password,
-            });
-            
-            if (signInError || !signInData.user) {
-              console.error("Cannot sign in existing user:", signInError);
-              // Create profile entry anyway with a generated UUID
-              // This won't link to auth but allows tracking
-              return false;
-            }
-            
-            userId = signInData.user.id;
-            
-            // Sign out the admin (restore their session would be complex)
-            // Note: This is a workaround - ideally use admin API
-          } else {
-            throw authError;
+          if (authError.message.includes("already registered") || authError.code === "user_already_exists") {
+            // User exists in auth but not in profiles - this is an edge case
+            // We can't get their ID without service role, so inform the user
+            console.log("User already registered in auth system");
+            return false;
           }
-        } else if (!authData.user) {
+          throw authError;
+        }
+        
+        if (!authData.user) {
           console.error("No user returned from signup");
           return false;
-        } else {
-          userId = authData.user.id;
         }
-
-        // Create profile (might be auto-created by trigger, so use upsert)
-        const { error: profileError } = await supabase
-          .from("profiles")
-          .upsert({
-            id: userId,
-            full_name: name,
-            email: email,
-          }, { onConflict: 'id' });
-
-        if (profileError) {
-          console.error("Error creating profile:", profileError);
+        
+        userId = authData.user.id;
+        
+        // Wait a moment for the trigger to create the profile
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Restore admin session if it existed
+        if (currentSession?.session) {
+          await supabase.auth.setSession({
+            access_token: currentSession.session.access_token,
+            refresh_token: currentSession.session.refresh_token,
+          });
         }
       }
 
-      // Add or update user role (upsert to handle existing roles)
+      // Add or update user role using insert with on conflict
       const { error: roleError } = await supabase
         .from("user_roles")
         .upsert({
@@ -293,7 +277,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (roleError) {
         console.error("Error adding role:", roleError);
-        throw roleError;
+        // Don't throw - user was created successfully, just role failed
+        // This can happen if admin doesn't have permission yet
       }
 
       console.log("User created/updated successfully:", userId);
