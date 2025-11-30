@@ -155,12 +155,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginLocal = async (identifier: string, password: string, role: UserRole): Promise<boolean> => {
     const MOCK_USERS = {
       faculty: [
-        { id: "11111111-1111-1111-1111-111111111111", name: "Dr. Jane Smith", email: "jane@faculty.edu", erpId: "DBUUF001", password: "123456", role: "faculty" as UserRole, department: "Computer Science", permissions: [...DEFAULT_PERMISSIONS.faculty] },
+        { id: "f1111111-1111-1111-1111-111111111111", name: "Yudveer sir", email: "DBUUF001@pariksha.edu", erpId: "DBUUF001", password: "654321", role: "faculty" as UserRole, department: "Computer Science", permissions: [...DEFAULT_PERMISSIONS.faculty] },
         { id: "22222222-2222-2222-2222-222222222222", name: "Prof. John Doe", email: "john@faculty.edu", erpId: "DBUUF002", password: "password123", role: "faculty" as UserRole, department: "Mathematics", permissions: [...DEFAULT_PERMISSIONS.faculty] },
       ],
       student: [
-        { id: "44444444-4444-4444-4444-444444444444", name: "Alex Johnson", email: "alex@student.edu", erpId: "22BTCSE0100", password: "password123", role: "student" as UserRole, course: "Computer Science", permissions: [...DEFAULT_PERMISSIONS.student] },
-        { id: "66666666-6666-6666-6666-666666666666", name: "Anshul", email: "anshul@student.edu", erpId: "22BTCSE0200", password: "24042004", role: "student" as UserRole, course: "Computer Science", permissions: [...DEFAULT_PERMISSIONS.student] },
+        { id: "a2222222-2222-2222-2222-222222222222", name: "Anshul", email: "22BTCSE0200@pariksha.edu", erpId: "22BTCSE0200", password: "24042004", role: "student" as UserRole, course: "Computer Science", permissions: [...DEFAULT_PERMISSIONS.student] },
+        { id: "a3333333-3333-3333-3333-333333333333", name: "Ishika Saxena", email: "22BTCSEAI0026@pariksha.edu", erpId: "22BTCSEAI0026", password: "23062004", role: "student" as UserRole, course: "Computer Science", permissions: [...DEFAULT_PERMISSIONS.student] },
       ],
       admin: [
         { id: "77777777-7777-7777-7777-777777777777", name: "Admin User", email: "admin@pariksha.edu", erpId: "ADMIN001", password: "admin123", role: "admin" as UserRole, permissions: [...DEFAULT_PERMISSIONS.admin] },
