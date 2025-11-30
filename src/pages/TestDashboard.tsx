@@ -23,12 +23,15 @@ import {
   Clock,
   RefreshCw,
   Wifi,
-  WifiOff
+  WifiOff,
+  Shield,
+  Maximize2
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useTest } from "@/context/TestContext";
 import { useRealtimeTestSessions } from "@/hooks/useRealtimeTestSessions";
 import ThreeDBackground from "@/components/3d/ThreeDBackground";
+import { LiveMonitoringDashboard } from "@/components/LiveMonitoringDashboard";
 import {
   Table,
   TableBody,
@@ -44,6 +47,7 @@ const TestDashboard = () => {
   const { toast } = useToast();
   const { getTestById } = useTest();
   const [isLive, setIsLive] = useState(true);
+  const [showFullMonitor, setShowFullMonitor] = useState(false);
 
   const test = getTestById(id || "");
   
@@ -65,6 +69,23 @@ const TestDashboard = () => {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  // Show full monitoring dashboard
+  if (showFullMonitor) {
+    return (
+      <div className="min-h-screen p-4 md:p-6 relative overflow-hidden">
+        <ThreeDBackground />
+        <div className="relative z-10">
+          <LiveMonitoringDashboard
+            testId={id || ""}
+            testTitle={test.title}
+            warningThreshold={3}
+            onBack={() => setShowFullMonitor(false)}
+          />
+        </div>
       </div>
     );
   }
@@ -139,6 +160,15 @@ const TestDashboard = () => {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Full Monitor Button */}
+          <Button
+            onClick={() => setShowFullMonitor(true)}
+            className="bg-gradient-to-r from-primary to-violet-500 hover:opacity-90"
+          >
+            <Maximize2 className="h-4 w-4 mr-2" />
+            Full Monitor
+          </Button>
+
           {/* Live Indicator */}
           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${isLive ? 'bg-green-500/20' : 'bg-gray-500/20'}`}>
             {isLive ? (

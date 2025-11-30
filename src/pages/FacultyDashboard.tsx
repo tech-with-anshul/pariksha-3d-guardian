@@ -182,6 +182,12 @@ const FacultyDashboard = () => {
     return "Good evening";
   }, []);
 
+  // Get first published test for quick monitor action
+  const firstPublishedTest = useMemo(
+    () => facultyTests.find((t) => t.status === "published"),
+    [facultyTests]
+  );
+
   // Quick actions
   const quickActions = useMemo(
     () => [
@@ -192,10 +198,16 @@ const FacultyDashboard = () => {
         color: "from-blue-500 to-cyan-500",
       },
       {
-        icon: <FileText className="h-5 w-5" />,
-        label: "Templates",
-        action: () => console.log("Templates"),
-        color: "from-purple-500 to-pink-500",
+        icon: <Activity className="h-5 w-5" />,
+        label: "Live Monitor",
+        action: () => {
+          if (firstPublishedTest) {
+            navigate(`/test-dashboard/${firstPublishedTest.id}`);
+          } else {
+            console.log("No published tests to monitor");
+          }
+        },
+        color: "from-green-500 to-emerald-500",
       },
       {
         icon: <Download className="h-5 w-5" />,
@@ -210,7 +222,7 @@ const FacultyDashboard = () => {
         color: "from-orange-500 to-amber-500",
       },
     ],
-    [navigate]
+    [navigate, firstPublishedTest]
   );
 
   const containerVariants = {
