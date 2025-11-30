@@ -19,6 +19,8 @@ import { backgroundAppController } from "@/utils/backgroundAppController";
 import WebcamMonitor from "@/components/WebcamMonitor";
 import { useWebcamMonitoring } from "@/hooks/useWebcamMonitoring";
 import { WebcamStatus } from "@/components/ui/webcam-status";
+import { useTestSubmission } from "@/hooks/useTestSubmission";
+import { supabase } from "@/integrations/supabase/client";
 
 const TakeTest = () => {
   const { id } = useParams();
@@ -101,6 +103,16 @@ const TakeTest = () => {
     });
   };
 
+  // Test submission hook
+  const {
+    isSubmitting: submissionInProgress,
+    getOrCreateSession,
+    submitAnswer: submitAnswerToDb,
+    submitTest: submitTestToDb,
+    updateSessionWarnings,
+    logMonitoringEvent,
+  } = useTestSubmission();
+
   // Redirect if not authenticated as student
   useEffect(() => {
     if (!user || user.role !== "student") {
@@ -110,59 +122,165 @@ const TakeTest = () => {
 
     if (!id) return;
 
-    // Load test from local storage/context
-    const t = getTestById(id);
-    if (!t || t.status !== "published") {
-      navigate("/student-dashboard");
-      toast({
-        title: "Test not found",
-        description: "The test you're looking for is not available.",
-        variant: "destructive",
-      });
-      return;
-    }
+    const loadTest = async () => {
+      // Try to load from Supabase first
+      try {
+        const { data: supabaseTest, error } = await supabase
+          .from("tests")
+          .select(`
+            *,
+            questions(*)
+          `)
+          .eq("id", id)
+          .single();
 
-    setTest(t);
-    setTimeLeft(t.duration * 60);
+        if (supabaseTest && !error) {
+          // Sort questions by order
+          if (supabaseTest.questions) {
+            supabaseTest.questions.sort((a: any, b: any) => a.order_number - b.order_number);
+          }
+          
+          // Map to expected format
+          const mappedTest = {
+            id: supabaseTest.id,
+            title: supabaseTest.title,
+            subject: supabaseTest.subject,
+            duration: supabaseTest.duration_minutes,
+            unique_id: supabaseTest.test_id,
+            status: "published",
+            questions: (supabaseTest.questions || []).map((q: any) => ({
+              id: q.id,
+              text: q.question_text,
+              type: q.question_type,
+              options: q.options,
+              correct_answer: q.correct_answer,
+              marks: q.marks,
+            })),
+          };
+          
+          setTest(mappedTest);
+          setTimeLeft(mappedTest.duration * 60);
 
-    // Local session management
-    const SESS_KEY = "pariksha_sessions";
-    const sessions: any[] = JSON.parse(localStorage.getItem(SESS_KEY) || "[]");
-    let existing = sessions.find(s => s.test_id === t.id && s.student_id === user.id);
+          // Create or get session from Supabase
+          try {
+            const session = await getOrCreateSession(supabaseTest.id, user.id);
+            if (session) {
+              setSessionId(session.id);
+              if (session.status === 'completed' || session.status === 'submitted') {
+                toast({
+                  title: "Test already submitted",
+                  description: "You have already completed this test.",
+                  variant: "destructive",
+                });
+                navigate("/student-dashboard");
+                return;
+              }
+              // Load any existing answers
+              loadPreviousAnswersFromDb(session.id);
+            }
+          } catch (sessionError) {
+            console.error("Session error:", sessionError);
+            // Fall back to local session
+            createLocalSession(mappedTest);
+          }
+          
+          return;
+        }
+      } catch (e) {
+        console.error("Error loading from Supabase:", e);
+      }
 
-    if (existing) {
-      setSessionId(existing.id);
-      if (existing.status === 'completed') {
+      // Fall back to local storage/context
+      const t = getTestById(id);
+      if (!t || t.status !== "published") {
+        navigate("/student-dashboard");
         toast({
-          title: "Test already submitted",
-          description: "You have already completed this test.",
+          title: "Test not found",
+          description: "The test you're looking for is not available.",
           variant: "destructive",
         });
-        navigate("/student-dashboard");
         return;
       }
-      loadPreviousAnswers(existing.id);
-    } else {
-      const newSession = {
-        id: crypto.randomUUID(),
-        test_id: t.id,
-        student_id: user.id,
-        started_at: new Date().toISOString(),
-        status: 'active',
-        warnings: 0,
-      };
-      sessions.push(newSession);
-      localStorage.setItem(SESS_KEY, JSON.stringify(sessions));
-      setSessionId(newSession.id);
-    }
 
-    // Load evaluations (local no-op for now)
-    loadEvaluations(t.id);
-  }, [id, user, navigate, getTestById, toast]);
+      setTest(t);
+      setTimeLeft(t.duration * 60);
+      createLocalSession(t);
+    };
+
+    const createLocalSession = (t: any) => {
+      const SESS_KEY = "pariksha_sessions";
+      const sessions: any[] = JSON.parse(localStorage.getItem(SESS_KEY) || "[]");
+      let existing = sessions.find(s => s.test_id === t.id && s.student_id === user.id);
+
+      if (existing) {
+        setSessionId(existing.id);
+        if (existing.status === 'completed') {
+          toast({
+            title: "Test already submitted",
+            description: "You have already completed this test.",
+            variant: "destructive",
+          });
+          navigate("/student-dashboard");
+          return;
+        }
+        loadPreviousAnswers(existing.id);
+      } else {
+        const newSession = {
+          id: crypto.randomUUID(),
+          test_id: t.id,
+          student_id: user.id,
+          started_at: new Date().toISOString(),
+          status: 'active',
+          warnings: 0,
+        };
+        sessions.push(newSession);
+        localStorage.setItem(SESS_KEY, JSON.stringify(sessions));
+        setSessionId(newSession.id);
+      }
+
+      loadEvaluations(t.id);
+    };
+
+    loadTest();
+  }, [id, user, navigate, getTestById, toast, getOrCreateSession]);
 
   // Load evaluations (local placeholder)
   const loadEvaluations = async (_testId: string) => {
     setEvaluations({});
+  };
+
+  // Load previously saved answers from Supabase
+  const loadPreviousAnswersFromDb = async (testSessionId: string) => {
+    try {
+      const { data: answersData, error } = await supabase
+        .from("answers")
+        .select("*")
+        .eq("session_id", testSessionId);
+
+      if (error) {
+        console.error("Error loading answers from DB:", error);
+        return;
+      }
+
+      if (answersData && answersData.length > 0) {
+        const loadedAnswers: Record<string, string | boolean> = {};
+        answersData.forEach((a) => {
+          if (a.student_answer) {
+            // Try to parse as boolean if it's true/false
+            if (a.student_answer === "true") {
+              loadedAnswers[a.question_id] = true;
+            } else if (a.student_answer === "false") {
+              loadedAnswers[a.question_id] = false;
+            } else {
+              loadedAnswers[a.question_id] = a.student_answer;
+            }
+          }
+        });
+        setAnswers(loadedAnswers);
+      }
+    } catch (error) {
+      console.error("Error loading previous answers from DB:", error);
+    }
   };
 
   // Load previously saved answers (local)
@@ -234,7 +352,7 @@ const TakeTest = () => {
         
         // Update warning count in session
         if (sessionId) {
-          updateSessionWarnings(newWarningCount);
+          updateLocalSessionWarnings(newWarningCount);
         }
       }
     };
@@ -250,10 +368,11 @@ const TakeTest = () => {
     };
   }, [test, warningCount, toast, sessionId]);
 
-  // Update session warnings (local)
-  const updateSessionWarnings = async (count: number) => {
+  // Update session warnings (local + Supabase)
+  const updateLocalSessionWarnings = async (count: number) => {
     if (!sessionId) return;
     try {
+      // Update local storage
       const SESS_KEY = "pariksha_sessions";
       const sessions: any[] = JSON.parse(localStorage.getItem(SESS_KEY) || "[]");
       const idx = sessions.findIndex(s => s.id === sessionId);
@@ -261,8 +380,11 @@ const TakeTest = () => {
         sessions[idx].warnings = count;
         localStorage.setItem(SESS_KEY, JSON.stringify(sessions));
       }
+      
+      // Also update in Supabase
+      await updateSessionWarnings(sessionId, { total_warnings: count });
     } catch (error) {
-      console.error("Error updating session warnings (local):", error);
+      console.error("Error updating session warnings:", error);
     }
   };
 
@@ -484,6 +606,7 @@ const TakeTest = () => {
     try {
       // Stop monitoring
       stopMonitoring();
+      webcamMonitoring.stopMonitoring();
       
       // Clean up any object URLs to avoid memory leaks
       Object.values(imagePreviewUrls).forEach(url => {
@@ -493,6 +616,14 @@ const TakeTest = () => {
       });
       
       if (sessionId) {
+        // Submit to Supabase - convert answers to strings
+        const stringAnswers: Record<string, string> = {};
+        Object.entries(answers).forEach(([key, value]) => {
+          stringAnswers[key] = String(value);
+        });
+        const submitted = await submitTestToDb(sessionId, stringAnswers, forced);
+        
+        // Also update local storage
         const SESS_KEY = "pariksha_sessions";
         const sessions: any[] = JSON.parse(localStorage.getItem(SESS_KEY) || "[]");
         const idx = sessions.findIndex(s => s.id === sessionId);
@@ -501,6 +632,12 @@ const TakeTest = () => {
           sessions[idx].ended_at = new Date().toISOString();
           localStorage.setItem(SESS_KEY, JSON.stringify(sessions));
         }
+        
+        // Log monitoring event
+        await logMonitoringEvent(sessionId, forced ? 'test_terminated' : 'test_submitted', {
+          total_violations: totalViolations,
+          warning_count: warningCount,
+        });
       }
       
       navigate("/student-dashboard");
